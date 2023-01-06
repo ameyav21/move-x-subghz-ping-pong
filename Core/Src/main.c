@@ -1,7 +1,7 @@
 /*
  * main.c
  *
- *  Created on: Jan 3, 2023
+ *  Created on: Jan 5, 2023
  *      Author: avalsangkar
  */
 
@@ -75,15 +75,13 @@ typedef struct
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define RF_FREQUENCY                                915000000 /* Hz */
+#define RF_FREQUENCY                                868000000 /* Hz */
 #define TX_OUTPUT_POWER                             14        /* dBm */
-#define FSK_FDEV                                    25000     /* Hz */
-#define FSK_DATARATE                                50000     /* bps */
-#define FSK_BANDWIDTH                               50000     /* Hz */
-#define FSK_PREAMBLE_LENGTH                         5         /* Same for Tx and Rx */
-#define FSK_SYNCWORD_LENGTH                         3
-//#define FSK_FIX_LENGTH_PAYLOAD_ON                   false
-//#define PAYLOAD_LEN                                 64
+#define LORA_BANDWIDTH                              0         /* Hz */
+#define LORA_SPREADING_FACTOR                       7
+#define LORA_CODINGRATE                             1
+#define LORA_PREAMBLE_LENGTH                        8         /* Same for Tx and Rx */
+#define LORA_SYMBOL_TIMEOUT                         5         /* Symbols */
 
 
 #ifdef __GNUC__
@@ -98,6 +96,8 @@ typedef struct
 /* USER CODE BEGIN PV */
 void (*volatile eventReceptor)(pingPongFSM_t *const fsm);
 PacketParams_t packetParams;  // TODO: this is lazy
+
+const RadioLoRaBandwidths_t Bandwidths[] = { LORA_BW_125, LORA_BW_250, LORA_BW_500 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -210,10 +210,9 @@ int main(void)
   MX_SUBGHZ_Init();
   /* USER CODE BEGIN 2 */
 
-  printf("UART2\r\n");
   strcpy(uartBuff, "\n\rPING PONG\r\nAPP_VERSION=0.0.1\r\n---------------\r\n");
   HAL_UART_Transmit(&huart1, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
-  sprintf(uartBuff, "FSK_MODULATION\r\nFSK_BW=%d Hz\r\nFSK_DR=%d bits/s\r\n", FSK_BANDWIDTH, FSK_DATARATE);
+  sprintf(uartBuff, "LORA_MODULATION\r\nLORA_BW=%d Hz\r\nLORA_SF=%d\r\n", (1 << LORA_BANDWIDTH) * 125, LORA_SPREADING_FACTOR);
   HAL_UART_Transmit(&huart1, (uint8_t *)uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
   radioInit();
 
@@ -326,29 +325,32 @@ void radioInit(void)
   SUBGRF_SetRfTxPower(TX_OUTPUT_POWER);
   SUBGRF_SetStopRxTimerOnPreambleDetect(false);
 
-  SUBGRF_SetPacketType(PACKET_TYPE_GFSK);
+  SUBGRF_SetPacketType(PACKET_TYPE_LORA);
+
+  SUBGRF_WriteRegister( REG_LR_SYNCWORD, ( LORA_MAC_PRIVATE_SYNCWORD >> 8 ) & 0xFF );
+  SUBGRF_WriteRegister( REG_LR_SYNCWORD + 1, LORA_MAC_PRIVATE_SYNCWORD & 0xFF );
 
   ModulationParams_t modulationParams;
-  modulationParams.PacketType = PACKET_TYPE_GFSK;
-  modulationParams.Params.Gfsk.Bandwidth = SUBGRF_GetFskBandwidthRegValue(FSK_BANDWIDTH);
-  modulationParams.Params.Gfsk.BitRate = FSK_DATARATE;
-  modulationParams.Params.Gfsk.Fdev = FSK_FDEV;
-  modulationParams.Params.Gfsk.ModulationShaping = MOD_SHAPING_G_BT_1;
+  modulationParams.PacketType = PACKET_TYPE_LORA;
+  modulationParams.Params.LoRa.Bandwidth = Bandwidths[LORA_BANDWIDTH];
+  modulationParams.Params.LoRa.CodingRate = (RadioLoRaCodingRates_t)LORA_CODINGRATE;
+  modulationParams.Params.LoRa.LowDatarateOptimize = 0x00;
+  modulationParams.Params.LoRa.SpreadingFactor = (RadioLoRaSpreadingFactors_t)LORA_SPREADING_FACTOR;
   SUBGRF_SetModulationParams(&modulationParams);
 
-  packetParams.PacketType = PACKET_TYPE_GFSK;
-  packetParams.Params.Gfsk.AddrComp = RADIO_ADDRESSCOMP_FILT_OFF;
-  packetParams.Params.Gfsk.CrcLength = RADIO_CRC_2_BYTES_CCIT;
-  packetParams.Params.Gfsk.DcFree = RADIO_DC_FREEWHITENING;
-  packetParams.Params.Gfsk.HeaderType = RADIO_PACKET_VARIABLE_LENGTH;
-  packetParams.Params.Gfsk.PayloadLength = 0xFF;
-  packetParams.Params.Gfsk.PreambleLength = (FSK_PREAMBLE_LENGTH << 3); // bytes to bits
-  packetParams.Params.Gfsk.PreambleMinDetect = RADIO_PREAMBLE_DETECTOR_08_BITS;
-  packetParams.Params.Gfsk.SyncWordLength = (FSK_SYNCWORD_LENGTH << 3); // bytes to bits
+  packetParams.PacketType = PACKET_TYPE_LORA;
+  packetParams.Params.LoRa.CrcMode = LORA_CRC_ON;
+  packetParams.Params.LoRa.HeaderType = LORA_PACKET_VARIABLE_LENGTH;
+  packetParams.Params.LoRa.InvertIQ = LORA_IQ_NORMAL;
+  packetParams.Params.LoRa.PayloadLength = 0xFF;
+  packetParams.Params.LoRa.PreambleLength = LORA_PREAMBLE_LENGTH;
   SUBGRF_SetPacketParams(&packetParams);
 
-  SUBGRF_SetSyncWord((uint8_t[]){0xC1, 0x94, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00});
-  SUBGRF_SetWhiteningSeed(0x01FF);
+  //SUBGRF_SetLoRaSymbNumTimeout(LORA_SYMBOL_TIMEOUT);
+
+  // WORKAROUND - Optimizing the Inverted IQ Operation, see DS_SX1261-2_V1.2 datasheet chapter 15.4
+  // RegIqPolaritySetup @address 0x0736
+  SUBGRF_WriteRegister( 0x0736, SUBGRF_ReadRegister( 0x0736 ) | ( 1 << 2 ) );
 }
 
 
@@ -610,12 +612,12 @@ void eventRxError(pingPongFSM_t *const fsm)
 void enterMasterRx(pingPongFSM_t *const fsm)
 {
   HAL_UART_Transmit(&huart1, "Master Rx start\r\n", 17, HAL_MAX_DELAY);
-  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
-                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
+  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
+                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
                           IRQ_RADIO_NONE,
                           IRQ_RADIO_NONE );
   SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
-  packetParams.Params.Gfsk.PayloadLength = 0xFF;
+  packetParams.Params.LoRa.PayloadLength = 0xFF;
   SUBGRF_SetPacketParams(&packetParams);
   SUBGRF_SetRx(fsm->rxTimeout << 6);
 }
@@ -629,12 +631,12 @@ void enterMasterRx(pingPongFSM_t *const fsm)
 void enterSlaveRx(pingPongFSM_t *const fsm)
 {
   HAL_UART_Transmit(&huart1, "Slave Rx start\r\n", 16, HAL_MAX_DELAY);
-  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
-                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR,
+  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
+                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
                           IRQ_RADIO_NONE,
                           IRQ_RADIO_NONE );
   SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
-  packetParams.Params.Gfsk.PayloadLength = 0xFF;
+  packetParams.Params.LoRa.PayloadLength = 0xFF;
   SUBGRF_SetPacketParams(&packetParams);
   SUBGRF_SetRx(fsm->rxTimeout << 6);
 }
@@ -658,7 +660,7 @@ void enterMasterTx(pingPongFSM_t *const fsm)
   SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
   // Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
   SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04));
-  packetParams.Params.Gfsk.PayloadLength = 0x4;
+  packetParams.Params.LoRa.PayloadLength = 0x4;
   SUBGRF_SetPacketParams(&packetParams);
   SUBGRF_SendPayload((uint8_t *)"PING", 4, 0);
 }
@@ -682,7 +684,7 @@ void enterSlaveTx(pingPongFSM_t *const fsm)
   SUBGRF_SetSwitch(RFO_LP, RFSWITCH_TX);
   // Workaround 5.1 in DS.SX1261-2.W.APP (before each packet transmission)
   SUBGRF_WriteRegister(0x0889, (SUBGRF_ReadRegister(0x0889) | 0x04));
-  packetParams.Params.Gfsk.PayloadLength = 0x4;
+  packetParams.Params.LoRa.PayloadLength = 0x4;
   SUBGRF_SetPacketParams(&packetParams);
   SUBGRF_SendPayload((uint8_t *)"PONG", 4, 0);
 }
@@ -705,9 +707,8 @@ void transitionRxDone(pingPongFSM_t *const fsm)
 
   SUBGRF_GetPayload((uint8_t *)fsm->rxBuffer, &fsm->rxSize, 0xFF);
   SUBGRF_GetPacketStatus(&packetStatus);
-  SUBGRF_GetCFO(FSK_DATARATE, &cfo);
 
-  sprintf(uartBuff, "RssiValue=%d dBm, Cfo=%d Hz\r\n", packetStatus.Params.Gfsk.RssiAvg, cfo);
+  sprintf(uartBuff, "RssiValue=%d dBm, SnrValue=%d Hz\r\n", packetStatus.Params.LoRa.RssiPkt, packetStatus.Params.LoRa.SnrPkt);
   HAL_UART_Transmit(&huart1, uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
 }
 
