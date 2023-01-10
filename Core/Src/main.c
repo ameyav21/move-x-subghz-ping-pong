@@ -622,26 +622,6 @@ void enterMasterRx(pingPongFSM_t *const fsm)
   SUBGRF_SetRx(fsm->rxTimeout << 6);
 }
 
-
-/**
-  * @brief  Entry actions for the RX sub-state of the Slave state
-  * @param  fsm pointer to FSM context
-  * @retval None
-  */
-void enterSlaveRx(pingPongFSM_t *const fsm)
-{
-  HAL_UART_Transmit(&huart1, "Slave Rx start\r\n", 16, HAL_MAX_DELAY);
-  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
-                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
-                          IRQ_RADIO_NONE,
-                          IRQ_RADIO_NONE );
-  SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
-  packetParams.Params.LoRa.PayloadLength = 0xFF;
-  SUBGRF_SetPacketParams(&packetParams);
-  SUBGRF_SetRx(fsm->rxTimeout << 6);
-}
-
-
 /**
   * @brief  Entry actions for the TX sub-state of the Master state
   * @param  fsm pointer to FSM context
@@ -711,6 +691,27 @@ void transitionRxDone(pingPongFSM_t *const fsm)
   sprintf(uartBuff, "RssiValue=%d dBm, SnrValue=%d Hz\r\n", packetStatus.Params.LoRa.RssiPkt, packetStatus.Params.LoRa.SnrPkt);
   HAL_UART_Transmit(&huart1, uartBuff, strlen(uartBuff), HAL_MAX_DELAY);
 }
+
+/**
+  * @brief  Entry actions for the RX sub-state of the Slave state
+  * @param  fsm pointer to FSM context
+  * @retval None
+  */
+void enterSlaveRx(pingPongFSM_t *const fsm)
+{
+  HAL_UART_Transmit(&huart1, "Slave Rx start\r\n", 16, HAL_MAX_DELAY);
+  SUBGRF_SetDioIrqParams( IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
+                          IRQ_RX_DONE | IRQ_RX_TX_TIMEOUT | IRQ_CRC_ERROR | IRQ_HEADER_ERROR,
+                          IRQ_RADIO_NONE,
+                          IRQ_RADIO_NONE );
+  SUBGRF_SetSwitch(RFO_LP, RFSWITCH_RX);
+  packetParams.Params.LoRa.PayloadLength = 0xFF;
+  SUBGRF_SetPacketParams(&packetParams);
+  SUBGRF_SetRx(fsm->rxTimeout << 6);
+}
+
+
+
 
 /* USER CODE END 4 */
 
